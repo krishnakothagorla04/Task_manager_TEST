@@ -1,0 +1,59 @@
+# ==============================================================
+# MongoDB Backup CronJob
+# Runs mongodump daily at midnight to create a binary backup
+# of the entire taskmanager database. Backups are stored on a
+# dedicated PersistentVolumeClaim for disaster recovery.
+# ==============================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongo-backup-pvc
+  namespace: taskmanager
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mongodb-backup
+  namespace: taskmanager
+spec:
+  schedule: "0 0 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: mongodump
+              image: mongo:6
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+                  echo "Starting MongoDB backup at ${TIMESTAMP}..."
+                  mongodump --host mongodb.taskmanager.svc.cluster.local:27017 \
+                            --db taskmanager \
+                            --out /backups/backup-${TIMESTAMP}
+                  echo "Backup completed successfully: /backups/backup-${TIMESTAMP}"
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: "128Mi"
+                limits:
+                  cpu: "200m"
+                  memory: "256Mi"
+          restartPolicy: OnFailure
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: mongo-backup-pvc

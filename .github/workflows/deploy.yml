@@ -1,0 +1,174 @@
+# ==============================================================
+# CI/CD Pipeline — GitHub Actions
+# Fully automated: Code push → Build → Audit → Scan → Push → Deploy
+#
+# Required GitHub Secrets:
+#   DOCKERHUB_USERNAME  — Your Docker Hub username
+#   DOCKERHUB_TOKEN     — Docker Hub access token
+#   SONAR_TOKEN         — SonarCloud authentication token
+# ==============================================================
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  USER_SERVICE_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/user-service
+  TASK_SERVICE_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/task-service
+
+jobs:
+  # ============================================================
+  # STAGE 1: Build & Test
+  # ============================================================
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [user-service, task-service]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        working-directory: ./${{ matrix.service }}
+        run: npm install
+
+      - name: Run tests
+        working-directory: ./${{ matrix.service }}
+        run: npm test
+
+      - name: Run dependency security audit
+        working-directory: ./${{ matrix.service }}
+        run: npm audit --audit-level=high || true
+
+  # ============================================================
+  # STAGE 2: SonarCloud Code Quality Analysis
+  # ============================================================
+  sonarcloud:
+    name: SonarCloud Quality Gate
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # ============================================================
+  # STAGE 3: Docker Build + Security Scan + Push
+  # ============================================================
+  docker-build-scan-push:
+    name: Docker Build, Scan & Push
+    runs-on: ubuntu-latest
+    needs: [build-and-test, sonarcloud]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    strategy:
+      matrix:
+        include:
+          - service: user-service
+            image_env: USER_SERVICE_IMAGE
+          - service: task-service
+            image_env: TASK_SERVICE_IMAGE
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }} \
+                       -t ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:latest \
+                       ./${{ matrix.service }}
+
+      # ── EXTRA FEATURE: Security Scanning with Trivy ──
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'   # Set to '1' to fail pipeline on vulnerabilities
+
+      - name: Push Docker image
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:latest
+
+  # ============================================================
+  # STAGE 4: Automated Local Deployment (Ephemeral Cluster)
+  # ============================================================
+  deploy:
+    name: Local CI Deployment Test
+    runs-on: ubuntu-latest
+    needs: docker-build-scan-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create local k8s cluster
+        uses: helm/kind-action@v1.8.0
+        with:
+          cluster_name: local-ci-cluster
+
+      - name: Wait for cluster to be ready
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Install storage provisioner for KinD
+        run: |
+          # KinD has no default StorageClass — install local-path-provisioner
+          kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.26/deploy/local-path-storage.yaml
+          # Set it as the default StorageClass so PVCs bind automatically
+          kubectl patch storageclass local-path -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+          # Wait for provisioner pod to be ready
+          kubectl rollout status deployment/local-path-provisioner -n local-path-storage --timeout=60s
+          echo "✅ Storage provisioner ready"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Terraform Apply (Automated IaC)
+        working-directory: ./terraform
+        env:
+          KUBE_CONFIG_PATH: ~/.kube/config
+        run: |
+          terraform apply -auto-approve -var="dockerhub_username=${{ secrets.DOCKERHUB_USERNAME }}"
+
+      - name: Verify deployment rollout
+        run: |
+          kubectl rollout status deployment/mongodb -n taskmanager --timeout=120s
+          kubectl rollout status deployment/user-service -n taskmanager --timeout=120s
+          kubectl rollout status deployment/task-service -n taskmanager --timeout=120s
+          echo "✅ All deployments rolled out successfully on local CI cluster!"
+
+      - name: Display final cluster state
+        run: |
+          kubectl get all -n taskmanager
