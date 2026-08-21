@@ -8,3 +8,8 @@ node_modules/
 .terraform.lock.hcl
 scratch_*
 Updates to be done*
+
+# Adaptive CI transient files (must not be committed)
+prediction.json
+risk_summary.md
+__pycache__/
