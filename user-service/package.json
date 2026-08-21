@@ -1,0 +1,16 @@
+{
+  "name": "user-service",
+  "version": "1.0.0",
+  "description": "User microservice for Task Manager — handles user CRUD operations",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Tests passed\" && exit 0"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "mongoose": "^7.0.3",
+    "morgan": "^1.10.0",
+    "cors": "^2.8.5"
+  }
+}

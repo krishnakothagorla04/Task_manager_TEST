@@ -1,0 +1,70 @@
+# ==============================================================
+# Network Policy — MongoDB Isolation
+# Only user-service and task-service can communicate with MongoDB.
+# All other ingress traffic to MongoDB is denied by default.
+# ==============================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mongodb-allow-services-only
+  namespace: taskmanager
+spec:
+  podSelector:
+    matchLabels:
+      app: mongodb
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: user-service
+        - podSelector:
+            matchLabels:
+              app: task-service
+      ports:
+        - protocol: TCP
+          port: 27017
+---
+# ==============================================================
+# Network Policy — Task Service Access Control
+# Task-service accepts traffic from any pod in the namespace
+# (frontend proxied via NodePort) and can reach user-service
+# for inter-service validation.
+# ==============================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: task-service-policy
+  namespace: taskmanager
+spec:
+  podSelector:
+    matchLabels:
+      app: task-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 3001
+---
+# ==============================================================
+# Network Policy — User Service Access Control
+# User-service accepts traffic from task-service (validation)
+# and external clients.
+# ==============================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: user-service-policy
+  namespace: taskmanager
+spec:
+  podSelector:
+    matchLabels:
+      app: user-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 3000
