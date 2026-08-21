@@ -51,8 +51,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install predictor deps
-        run: pip install numpy || true
+      - name: Install predictor deps (ML model)
+        run: pip install numpy pandas joblib "scikit-learn==1.6.1"
       - name: Run risk model
         id: risk
         run: python predict.py
