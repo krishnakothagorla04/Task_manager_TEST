@@ -75,11 +75,29 @@ jobs:
               owner: context.repo.owner, repo: context.repo.repo, body });
 
   # ============================================================
+  # STAGE 0.5: High-risk approval gate - pauses UP FRONT (HIGH only)
+  # A HIGH-risk commit stops here immediately and nothing else runs until a
+  # reviewer approves. MEDIUM and LOW commits skip this and flow straight through.
+  # ============================================================
+  high-risk-approval:
+    name: Manual Approval (high risk)
+    needs: predict-risk
+    if: needs.predict-risk.outputs.lane == 'HIGH'
+    runs-on: ubuntu-latest
+    environment: production   # required reviewers make this pause for approval
+    steps:
+      - run: echo "High-risk change approved - proceeding with the full pipeline."
+
+  # ============================================================
   # STAGE 1: Build & Test  (runs for EVERY commit - all lanes)
   # ============================================================
   build-and-test:
     name: Build & Test
-    needs: predict-risk
+    needs: [predict-risk, high-risk-approval]
+    if: >-
+      always() &&
+      needs.predict-risk.result == 'success' &&
+      (needs.high-risk-approval.result == 'success' || needs.high-risk-approval.result == 'skipped')
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -179,7 +197,7 @@ jobs:
     needs: [predict-risk, docker-build-scan-push]
     if: needs.predict-risk.outputs.lane == 'HIGH' && github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
-    environment: production   # add required reviewers in Settings for the approval gate
+    # (approval already happened up front in the high-risk-approval gate)
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
