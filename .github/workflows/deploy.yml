@@ -1,11 +1,15 @@
 # ==============================================================
-# CI/CD Pipeline — GitHub Actions
-# Fully automated: Code push → Build → Audit → Scan → Push → Deploy
+# Adaptive CI/CD Pipeline — GitHub Actions
+# Code push -> Predict risk -> (adaptively) Build -> Audit -> Scan -> Push -> Deploy
 #
-# Required GitHub Secrets:
-#   DOCKERHUB_USERNAME  — Your Docker Hub username
-#   DOCKERHUB_TOKEN     — Docker Hub access token
-#   SONAR_TOKEN         — SonarCloud authentication token
+# The pipeline predicts each commit's risk BEFORE building and runs only the
+# stages appropriate to that risk:
+#   LOW    -> Build & Test only            (skips Sonar, Docker, Deploy)
+#   MEDIUM -> + SonarCloud + Docker build/scan/push
+#   HIGH   -> + full k8s/Terraform deployment (with manual approval gate)
+#
+# Required GitHub Secrets (only used by the Medium/High stages):
+#   DOCKERHUB_USERNAME, DOCKERHUB_TOKEN, SONAR_TOKEN
 # ==============================================================
 
 name: CI/CD Pipeline
@@ -16,16 +20,66 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: write          # so the outcome log can be committed
+  pull-requests: write     # so the risk report can be posted on PRs
+
+concurrency:
+  group: adaptive-ci-log
+  cancel-in-progress: false
+
 env:
   USER_SERVICE_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/user-service
   TASK_SERVICE_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/task-service
 
 jobs:
   # ============================================================
-  # STAGE 1: Build & Test
+  # STAGE 0: Predict Risk (runs BEFORE any build work)
+  # ============================================================
+  predict-risk:
+    name: Predict Risk (pre-build)
+    runs-on: ubuntu-latest
+    outputs:
+      lane: ${{ steps.risk.outputs.lane }}
+      risk: ${{ steps.risk.outputs.risk }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2          # need the parent commit to diff against
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install predictor deps
+        run: pip install numpy || true
+      - name: Run risk model
+        id: risk
+        run: python predict.py
+      - name: Upload prediction
+        uses: actions/upload-artifact@v4
+        with:
+          name: prediction
+          path: |
+            prediction.json
+            risk_summary.md
+      - name: Comment risk on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('risk_summary.md', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner, repo: context.repo.repo, body });
+
+  # ============================================================
+  # STAGE 1: Build & Test  (runs for EVERY commit - all lanes)
   # ============================================================
   build-and-test:
     name: Build & Test
+    needs: predict-risk
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -52,12 +106,13 @@ jobs:
         run: npm audit --audit-level=high || true
 
   # ============================================================
-  # STAGE 2: SonarCloud Code Quality Analysis
+  # STAGE 2: SonarCloud  (MEDIUM and HIGH risk only)
   # ============================================================
   sonarcloud:
     name: SonarCloud Quality Gate
+    needs: [predict-risk, build-and-test]
+    if: needs.predict-risk.outputs.lane != 'LOW'
     runs-on: ubuntu-latest
-    needs: build-and-test
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -72,13 +127,13 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   # ============================================================
-  # STAGE 3: Docker Build + Security Scan + Push
+  # STAGE 3: Docker Build + Scan + Push  (MEDIUM and HIGH risk only)
   # ============================================================
   docker-build-scan-push:
     name: Docker Build, Scan & Push
+    needs: [predict-risk, build-and-test, sonarcloud]
+    if: (needs.predict-risk.outputs.lane == 'MED' || needs.predict-risk.outputs.lane == 'HIGH') && github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
-    needs: [build-and-test, sonarcloud]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     strategy:
       matrix:
         include:
@@ -102,14 +157,14 @@ jobs:
                        -t ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:latest \
                        ./${{ matrix.service }}
 
-      # ── EXTRA FEATURE: Security Scanning with Trivy ──
+      # -- Security Scanning with Trivy --
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}'
           format: 'table'
           severity: 'CRITICAL,HIGH'
-          exit-code: '0'   # Set to '1' to fail pipeline on vulnerabilities
+          exit-code: '0'   # Set to '1' to fail the pipeline on vulnerabilities
 
       - name: Push Docker image
         run: |
@@ -117,13 +172,14 @@ jobs:
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:latest
 
   # ============================================================
-  # STAGE 4: Automated Local Deployment (Ephemeral Cluster)
+  # STAGE 4: Automated Deployment  (HIGH risk only + approval gate)
   # ============================================================
   deploy:
     name: Local CI Deployment Test
+    needs: [predict-risk, docker-build-scan-push]
+    if: needs.predict-risk.outputs.lane == 'HIGH' && github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
-    needs: docker-build-scan-push
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production   # add required reviewers in Settings for the approval gate
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -140,13 +196,10 @@ jobs:
 
       - name: Install storage provisioner for KinD
         run: |
-          # KinD has no default StorageClass — install local-path-provisioner
           kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.26/deploy/local-path-storage.yaml
-          # Set it as the default StorageClass so PVCs bind automatically
           kubectl patch storageclass local-path -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
-          # Wait for provisioner pod to be ready
           kubectl rollout status deployment/local-path-provisioner -n local-path-storage --timeout=60s
-          echo "✅ Storage provisioner ready"
+          echo "Storage provisioner ready"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -167,8 +220,40 @@ jobs:
           kubectl rollout status deployment/mongodb -n taskmanager --timeout=120s
           kubectl rollout status deployment/user-service -n taskmanager --timeout=120s
           kubectl rollout status deployment/task-service -n taskmanager --timeout=120s
-          echo "✅ All deployments rolled out successfully on local CI cluster!"
+          echo "All deployments rolled out successfully on local CI cluster!"
 
       - name: Display final cluster state
         run: |
           kubectl get all -n taskmanager
+
+  # ============================================================
+  # STAGE 5: Log Outcome (closes the learning loop)
+  # ============================================================
+  log-outcome:
+    name: Log Outcome
+    needs: [predict-risk, build-and-test, sonarcloud, docker-build-scan-push, deploy]
+    if: always() && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: prediction
+      - name: Determine outcome and log
+        env:
+          OUTCOME: ${{ (needs.build-and-test.result == 'failure' || needs.docker-build-scan-push.result == 'failure' || needs.deploy.result == 'failure') && 'failed' || 'passed' }}
+        run: python log_outcome.py
+      - name: Commit outcome log
+        run: |
+          git config user.name  "adaptive-ci-bot"
+          git config user.email "actions@github.com"
+          git add logs/outcomes.csv
+          git commit -m "chore: log CI outcome [skip ci]" || { echo "nothing to commit"; exit 0; }
+          for i in 1 2 3; do
+            git pull --rebase --autostash origin ${{ github.ref_name }} && git push && exit 0
+            echo "push failed, retrying..."; sleep 3
+          done
+          echo "could not push after retries"; exit 1
