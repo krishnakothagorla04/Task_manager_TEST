@@ -95,7 +95,7 @@ jobs:
     name: Build & Test
     needs: [predict-risk, high-risk-approval]
     if: >-
-      always() &&
+      !cancelled() &&
       needs.predict-risk.result == 'success' &&
       (needs.high-risk-approval.result == 'success' || needs.high-risk-approval.result == 'skipped')
     runs-on: ubuntu-latest
@@ -129,7 +129,10 @@ jobs:
   sonarcloud:
     name: SonarCloud Quality Gate
     needs: [predict-risk, build-and-test]
-    if: needs.predict-risk.outputs.lane != 'LOW'
+    if: >-
+      !cancelled() &&
+      needs.build-and-test.result == 'success' &&
+      needs.predict-risk.outputs.lane != 'LOW'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -149,8 +152,12 @@ jobs:
   # ============================================================
   docker-build-scan-push:
     name: Docker Build, Scan & Push
-    needs: [predict-risk, build-and-test, sonarcloud]
-    if: (needs.predict-risk.outputs.lane == 'MED' || needs.predict-risk.outputs.lane == 'HIGH') && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [predict-risk, build-and-test]
+    if: >-
+      !cancelled() &&
+      needs.build-and-test.result == 'success' &&
+      (needs.predict-risk.outputs.lane == 'MED' || needs.predict-risk.outputs.lane == 'HIGH') &&
+      github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -195,7 +202,11 @@ jobs:
   deploy:
     name: Local CI Deployment Test
     needs: [predict-risk, docker-build-scan-push]
-    if: needs.predict-risk.outputs.lane == 'HIGH' && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: >-
+      !cancelled() &&
+      needs.docker-build-scan-push.result == 'success' &&
+      needs.predict-risk.outputs.lane == 'HIGH' &&
+      github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     # (approval already happened up front in the high-risk-approval gate)
     steps:
