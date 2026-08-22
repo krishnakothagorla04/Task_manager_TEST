@@ -3,140 +3,150 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Adaptive CI/CD - Impact Dashboard</title>
+<title>Adaptive CI/CD Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
-  :root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;
-        --low:#3fb950;--med:#d29922;--high:#f85149;--accent:#58a6ff;}
-  *{box-sizing:border-box;margin:0;padding:0;}
-  body{background:var(--bg);color:var(--text);font-family:-apple-system,Segoe UI,Roboto,sans-serif;
-       padding:28px;max-width:1200px;margin:0 auto;}
-  h1{font-size:24px;margin-bottom:4px;}
-  .sub{color:var(--muted);margin-bottom:24px;font-size:14px;}
-  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:28px;}
-  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:18px;}
-  .card .val{font-size:30px;font-weight:700;}
-  .card .lbl{color:var(--muted);font-size:13px;margin-top:4px;}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
-  .panel{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:20px;}
-  .panel h2{font-size:15px;margin-bottom:14px;font-weight:600;}
-  .banner{background:#1f2937;border:1px solid var(--border);border-radius:8px;padding:10px 14px;
-           margin-bottom:20px;font-size:13px;color:var(--muted);}
-  @media(max-width:800px){.grid{grid-template-columns:1fr;}}
+  :root{
+    --bg:#f5f7fa; --card:#ffffff; --ink:#1a2027; --muted:#6b7684; --line:#e6e9ef;
+    --low:#2ec76f; --med:#f5a623; --high:#e5484d; --accent:#4c6ef5;
+    --shadow:0 1px 3px rgba(16,24,40,.06),0 1px 2px rgba(16,24,40,.04);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+       -webkit-font-smoothing:antialiased;padding:32px 20px;line-height:1.4}
+  .wrap{max-width:1080px;margin:0 auto}
+  header{margin-bottom:26px}
+  h1{font-size:22px;font-weight:700;letter-spacing:-.02em}
+  .sub{color:var(--muted);font-size:14px;margin-top:4px}
+  .src{display:inline-block;margin-top:10px;font-size:12px;color:var(--muted);
+       background:var(--card);border:1px solid var(--line);border-radius:20px;padding:5px 12px}
+
+  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+        padding:18px 18px 16px;box-shadow:var(--shadow)}
+  .card .label{font-size:12.5px;color:var(--muted);font-weight:500;text-transform:uppercase;
+               letter-spacing:.04em}
+  .card .value{font-size:30px;font-weight:700;margin-top:8px;letter-spacing:-.02em}
+  .card .foot{font-size:12.5px;color:var(--muted);margin-top:4px}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:14px;
+         padding:18px 20px;box-shadow:var(--shadow)}
+  .panel h2{font-size:14px;font-weight:600;margin-bottom:2px}
+  .panel .hint{font-size:12.5px;color:var(--muted);margin-bottom:12px}
+  .panel.full{grid-column:1 / -1}
+  canvas{max-height:260px}
+  footer{color:var(--muted);font-size:12px;text-align:center;margin-top:26px}
+  @media(max-width:820px){.cards{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
-  <h1>Adaptive CI/CD - Impact Dashboard</h1>
-  <div class="sub">Live view of pipeline decisions and outcomes, read from logs/outcomes.csv</div>
-  <div class="banner" id="src"></div>
+<div class="wrap">
+  <header>
+    <h1>Adaptive CI/CD Dashboard</h1>
+    <div class="sub">Risk-aware pipeline &middot; how each commit was routed and the time it saved</div>
+    <div class="src" id="src">Loading&hellip;</div>
+  </header>
 
   <div class="cards">
-    <div class="card"><div class="val" id="c-total">-</div><div class="lbl">Commits processed</div></div>
-    <div class="card"><div class="val" id="c-fast" style="color:var(--low)">-</div><div class="lbl">Fast-tracked (low risk)</div></div>
-    <div class="card"><div class="val" id="c-saved" style="color:var(--accent)">-</div><div class="lbl">Compute saved vs run-everything</div></div>
-    <div class="card"><div class="val" id="c-caught" style="color:var(--med)">-</div><div class="lbl">Failures caught</div></div>
-    <div class="card"><div class="val" id="c-explore">-</div><div class="lbl">Exploration runs</div></div>
+    <div class="card"><div class="label">Commits</div><div class="value" id="c-total">&mdash;</div><div class="foot">processed by the pipeline</div></div>
+    <div class="card"><div class="label">Fast-tracked</div><div class="value" id="c-fast" style="color:var(--low)">&mdash;</div><div class="foot">low-risk, minimal pipeline</div></div>
+    <div class="card"><div class="label">Time saved</div><div class="value" id="c-saved" style="color:var(--accent)">&mdash;</div><div class="foot">vs. running every stage</div></div>
+    <div class="card"><div class="label">Failures caught</div><div class="value" id="c-fail" style="color:var(--high)">&mdash;</div><div class="foot">build failures detected</div></div>
   </div>
 
   <div class="grid">
-    <div class="panel"><h2>Pipeline lane distribution</h2><canvas id="laneChart"></canvas></div>
-    <div class="panel"><h2>Build outcomes</h2><canvas id="outcomeChart"></canvas></div>
+    <div class="panel">
+      <h2>Pipeline lane distribution</h2>
+      <div class="hint">How commits were routed by predicted risk</div>
+      <canvas id="laneChart"></canvas>
+    </div>
+    <div class="panel">
+      <h2>Build outcomes</h2>
+      <div class="hint">Passed, failed, or fast-tracked (unobserved)</div>
+      <canvas id="outChart"></canvas>
+    </div>
+    <div class="panel full">
+      <h2>Cumulative pipeline effort</h2>
+      <div class="hint">Adaptive pipeline vs. running every stage for every commit</div>
+      <canvas id="effChart" height="90"></canvas>
+    </div>
   </div>
-  <div class="panel"><h2>Risk score per commit (over time)</h2><canvas id="riskChart" height="90"></canvas></div>
-  <div class="panel"><h2>Cumulative compute: adaptive vs run-everything</h2><canvas id="computeChart" height="90"></canvas></div>
+
+  <footer>Reads <code>logs/outcomes.csv</code> &middot; updates as new commits are logged</footer>
+</div>
 
 <script>
-// Relative cost of each lane (fast lane is cheapest). Tune to your cost model.
-const COST = {LOW:0.3, MED:1.0, HIGH:1.3};
-// Sample data so the dashboard always renders during a demo, even before real runs exist.
+// relative pipeline "effort" per lane (build only vs full deploy)
+const COST = { LOW:1, MED:3, HIGH:5 };
 const SAMPLE = [
-  {score:0.04,lane_run:"LOW",predicted_lane:"LOW",explored:0,outcome:"unobserved"},
-  {score:0.06,lane_run:"MED",predicted_lane:"LOW",explored:1,outcome:"passed"},
-  {score:0.14,lane_run:"MED",predicted_lane:"MED",explored:0,outcome:"passed"},
-  {score:0.09,lane_run:"LOW",predicted_lane:"LOW",explored:0,outcome:"unobserved"},
-  {score:0.28,lane_run:"HIGH",predicted_lane:"HIGH",explored:0,outcome:"failed"},
-  {score:0.17,lane_run:"MED",predicted_lane:"MED",explored:0,outcome:"passed"},
-  {score:0.33,lane_run:"HIGH",predicted_lane:"HIGH",explored:0,outcome:"failed"},
-  {score:0.05,lane_run:"LOW",predicted_lane:"LOW",explored:0,outcome:"unobserved"},
-  {score:0.12,lane_run:"MED",predicted_lane:"MED",explored:0,outcome:"passed"},
-  {score:0.07,lane_run:"LOW",predicted_lane:"LOW",explored:0,outcome:"unobserved"},
-  {score:0.21,lane_run:"HIGH",predicted_lane:"HIGH",explored:0,outcome:"passed"},
-  {score:0.08,lane_run:"MED",predicted_lane:"LOW",explored:1,outcome:"failed"},
+  {score:.05,lane_run:"LOW",outcome:"unobserved"},{score:.06,lane_run:"LOW",outcome:"unobserved"},
+  {score:.14,lane_run:"MED",outcome:"passed"},{score:.12,lane_run:"MED",outcome:"passed"},
+  {score:.85,lane_run:"HIGH",outcome:"failed"},{score:.09,lane_run:"LOW",outcome:"unobserved"},
+  {score:.16,lane_run:"MED",outcome:"passed"},{score:.85,lane_run:"HIGH",outcome:"passed"},
+  {score:.07,lane_run:"LOW",outcome:"unobserved"},{score:.13,lane_run:"MED",outcome:"passed"},
+  {score:.85,lane_run:"HIGH",outcome:"failed"},{score:.08,lane_run:"LOW",outcome:"unobserved"},
 ];
 
-function parseCSV(text){
-  const lines=text.trim().split("\n"); const head=lines[0].split(",");
-  return lines.slice(1).map(l=>{const c=l.split(","); const o={};
-    head.forEach((h,i)=>o[h.trim()]=c[i]);
-    o.score=parseFloat(o.score); o.explored=parseInt(o.explored)||0; return o;});
+function parseCSV(t){
+  const [h,...rows]=t.trim().split("\n"); const cols=h.split(",");
+  return rows.map(r=>{const c=r.split(","),o={};cols.forEach((k,i)=>o[k.trim()]=c[i]);
+    o.score=parseFloat(o.score); return o;});
 }
-
 async function load(){
   try{
-    const r=await fetch("logs/outcomes.csv",{cache:"no-store"});
-    if(!r.ok) throw new Error();
-    const rows=parseCSV(await r.text());
-    if(!rows.length) throw new Error();
-    document.getElementById("src").textContent="Data source: logs/outcomes.csv ("+rows.length+" commits)";
+    const r=await fetch("logs/outcomes.csv",{cache:"no-store"}); if(!r.ok) throw 0;
+    const rows=parseCSV(await r.text()); if(!rows.length) throw 0;
+    document.getElementById("src").textContent=`Live data — ${rows.length} commits logged`;
     return rows;
   }catch(e){
-    document.getElementById("src").textContent="Data source: built-in sample data (no logs/outcomes.csv found yet). Real runs will replace this automatically.";
+    document.getElementById("src").textContent="Sample data — no logs/outcomes.csv yet (updates after pipeline runs)";
     return SAMPLE;
   }
 }
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
 
 function render(rows){
   const n=rows.length;
-  const counts={LOW:0,MED:0,HIGH:0};
-  rows.forEach(r=>counts[r.lane_run]=(counts[r.lane_run]||0)+1);
-  const fast=counts.LOW;
-  const explored=rows.filter(r=>r.explored).length;
-  const caught=rows.filter(r=>r.outcome==="failed").length;
-
-  // compute saved: baseline runs the heaviest lane for every commit
-  const actual=rows.reduce((s,r)=>s+(COST[r.lane_run]||1),0);
+  const cnt={LOW:0,MED:0,HIGH:0}; rows.forEach(r=>cnt[r.lane_run]=(cnt[r.lane_run]||0)+1);
+  const fast=cnt.LOW||0;
+  const fails=rows.filter(r=>r.outcome==="failed").length;
+  const actual=rows.reduce((s,r)=>s+(COST[r.lane_run]||3),0);
   const baseline=n*COST.HIGH;
-  const saved=Math.round((1-actual/baseline)*100);
+  const saved=Math.max(0,Math.round((1-actual/baseline)*100));
 
   document.getElementById("c-total").textContent=n;
-  document.getElementById("c-fast").textContent=fast+" ("+Math.round(fast/n*100)+"%)";
-  document.getElementById("c-saved").textContent=saved+"%";
-  document.getElementById("c-caught").textContent=caught;
-  document.getElementById("c-explore").textContent=explored;
+  document.getElementById("c-fast").textContent=`${Math.round(fast/n*100)}%`;
+  document.getElementById("c-saved").textContent=`${saved}%`;
+  document.getElementById("c-fail").textContent=fails;
 
-  const gc=v=>getComputedStyle(document.documentElement).getPropertyValue(v);
-  Chart.defaults.color=gc("--muted"); Chart.defaults.borderColor=gc("--border");
+  Chart.defaults.font.family=getComputedStyle(document.body).fontFamily;
+  Chart.defaults.color=css("--muted");
+  Chart.defaults.plugins.legend.labels.boxWidth=12;
+  Chart.defaults.plugins.legend.labels.padding=14;
+  const donut={cutout:"64%",plugins:{legend:{position:"bottom"}}};
 
   new Chart(laneChart,{type:"doughnut",data:{labels:["Low (fast)","Medium","High"],
-    datasets:[{data:[counts.LOW,counts.MED,counts.HIGH],
-    backgroundColor:[gc("--low"),gc("--med"),gc("--high")]}]},
-    options:{plugins:{legend:{position:"bottom"}}}});
+    datasets:[{data:[cnt.LOW,cnt.MED,cnt.HIGH],borderWidth:0,
+      backgroundColor:[css("--low"),css("--med"),css("--high")]}]},options:donut});
 
-  const oc={passed:0,failed:0,unobserved:0};
-  rows.forEach(r=>oc[r.outcome]=(oc[r.outcome]||0)+1);
-  new Chart(outcomeChart,{type:"doughnut",data:{labels:["Passed","Failed","Unobserved (fast-tracked)"],
-    datasets:[{data:[oc.passed,oc.failed,oc.unobserved],
-    backgroundColor:[gc("--low"),gc("--high"),gc("--muted")]}]},
-    options:{plugins:{legend:{position:"bottom"}}}});
-
-  new Chart(riskChart,{type:"scatter",data:{datasets:[{label:"Risk score",
-    data:rows.map((r,i)=>({x:i+1,y:r.score})),
-    pointBackgroundColor:rows.map(r=>gc(r.lane_run==="LOW"?"--low":r.lane_run==="MED"?"--med":"--high")),
-    pointRadius:5}]},
-    options:{scales:{x:{title:{display:true,text:"commit #"}},
-    y:{title:{display:true,text:"predicted failure risk"},min:0,max:1}},
-    plugins:{legend:{display:false}}}});
+  const oc={passed:0,failed:0,unobserved:0}; rows.forEach(r=>oc[r.outcome]=(oc[r.outcome]||0)+1);
+  new Chart(outChart,{type:"doughnut",data:{labels:["Passed","Failed","Fast-tracked"],
+    datasets:[{data:[oc.passed,oc.failed,oc.unobserved],borderWidth:0,
+      backgroundColor:[css("--low"),css("--high"),"#c3cad6"]}]},options:donut});
 
   let a=0,b=0; const A=[],B=[],L=[];
-  rows.forEach((r,i)=>{a+=COST[r.lane_run]||1; b+=COST.HIGH; A.push(a.toFixed(1)); B.push(b.toFixed(1)); L.push(i+1);});
-  new Chart(computeChart,{type:"line",data:{labels:L,datasets:[
-    {label:"Adaptive pipeline",data:A,borderColor:gc("--accent"),tension:.2},
-    {label:"Run everything",data:B,borderColor:gc("--high"),borderDash:[6,4],tension:.2}]},
-    options:{scales:{x:{title:{display:true,text:"commit #"}},
-    y:{title:{display:true,text:"cumulative compute units"}}},
-    plugins:{legend:{position:"bottom"}}}});
+  rows.forEach((r,i)=>{a+=COST[r.lane_run]||3;b+=COST.HIGH;A.push(a);B.push(b);L.push(i+1);});
+  new Chart(effChart,{type:"line",data:{labels:L,datasets:[
+    {label:"Adaptive pipeline",data:A,borderColor:css("--accent"),
+     backgroundColor:"rgba(76,110,245,.08)",fill:true,tension:.3,borderWidth:2,pointRadius:0},
+    {label:"Run everything",data:B,borderColor:css("--high"),borderDash:[6,5],
+     tension:.3,borderWidth:2,pointRadius:0}]},
+    options:{plugins:{legend:{position:"bottom"}},
+      scales:{x:{grid:{display:false},title:{display:true,text:"commit"}},
+              y:{grid:{color:css("--line")},title:{display:true,text:"cumulative effort"}}}}});
 }
-
 load().then(render);
 </script>
 </body>
