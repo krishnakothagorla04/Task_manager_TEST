@@ -123,7 +123,13 @@ app.delete('/tasks/:id', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
+// --- demo helper (medium-risk change) ---
+function taskStats(tasks = []) {
+  const total = tasks.length;
+  const done = tasks.filter(function (t) { return t && t.status === 'done'; }).length;
+  const pending = total - done;
+  return { total: total, done: done, pending: pending };
+}
 // ============================================================
 // START SERVER
 // ============================================================
