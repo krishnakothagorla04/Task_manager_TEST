@@ -130,6 +130,24 @@ function taskStats(tasks = []) {
   const pending = total - done;
   return { total: total, done: done, pending: pending };
 }
+// --- demo change (high-risk: larger, security-sensitive) ---
+function checkPassword(password) {
+  const errors = [];
+  if (!password || typeof password !== 'string') {
+    errors.push('password is required');
+    return { valid: false, errors: errors };
+  }
+  if (password.length < 8) errors.push('must be at least 8 characters');
+  if (!/[A-Z]/.test(password)) errors.push('must contain an uppercase letter');
+  if (!/[a-z]/.test(password)) errors.push('must contain a lowercase letter');
+  if (!/[0-9]/.test(password)) errors.push('must contain a number');
+  if (!/[^A-Za-z0-9]/.test(password)) errors.push('must contain a symbol');
+  const common = ['password', '12345678', 'qwerty', 'admin'];
+  if (common.indexOf(password.toLowerCase()) !== -1) {
+    errors.push('password is too common');
+  }
+  return { valid: errors.length === 0, errors: errors };
+}
 // ============================================================
 // START SERVER
 // ============================================================
