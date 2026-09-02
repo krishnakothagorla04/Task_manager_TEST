@@ -3,10 +3,7 @@
 
 ---
 
-## 1. Project Overview & Objective
-This project is an enterprise-grade, DevOps-centric **Task Manager Application**. The core objective of this project is not just to build an application, but to orchestrate, automate, and secure its entire lifecycle. 
 
-The system leverages a **Microservices Architecture** entirely provisioned via **Infrastructure as Code (Terraform)**, deployed to **Kubernetes**, and strictly automated through a **GitHub Actions CI/CD Pipeline**. It satisfies advanced enterprise requirements including Zero-Downtime deployments, DevSecOps vulnerability scanning, Local Storage Persistence, and mathematically driven Auto-Scaling.
 
 ---
 
