@@ -7,17 +7,6 @@
 
 ---
 
-## 2. The Application Architecture (Microservices)
-Instead of a traditional monolithic backend, the application logic is separated into decoupled services that communicate synchronously over the network.
-
-### 2.1 The Services
-* **User-Service (Node.js/Express):** Handles user registration, secure authentication, and session generation.
-* **Task-Service (Node.js/Express):** Handles the creation, status updating, and deletion of tasks.
-* **MongoDB (Database):** A centralized NoSQL database utilized dynamically by both services via Mongoose to maintain dedicated collections (`users` and `tasks`).
-* **Frontend SPA:** A single-page HTML/JS application (Vanilla JS) that handles Authentication (Sign Up/Sign In), Session Persistence (via `localStorage`), and strict **Data Isolation** (users can only view and manage tasks belonging directly to their secure Session ID).
-
-### 2.2 Proof of Inter-Service Communication
-When a user attempts to create a task via the Task-Service, the Task-Service does not blindly insert it into the database. Instead, the Task-Service initiates a synchronous `HTTP GET` REST API request out across the Kubernetes network to the User-Service to cryptographically validate that the user exists. If the User-Service denies the existence of the user, the task creation halts.
 
 ---
 
